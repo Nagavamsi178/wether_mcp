@@ -1,0 +1,46 @@
+name: Deploy to EC2
+ 
+on:
+  push:
+    branches: [ main ]   # deploy when main is updated
+ 
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+ 
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+ 
+    - name: Setup SSH key
+      uses: webfactory/ssh-agent@v0.7.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+ 
+    - name: Add EC2 host to known_hosts
+      run: |
+        mkdir -p ~/.ssh
+        ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+    - name: Rsync project to EC2
+      run: |
+        rsync -avz --delete --exclude '.git' --exclude '.github' ./ ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:${{ secrets.REMOTE_APP_DIR }}
+      env:
+        RSYNC_RSH: "ssh -o StrictHostKeyChecking=no"
+ 
+    - name: Run deploy script on EC2
+      run: |
+        ssh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+        cd ${{ secrets.REMOTE_APP_DIR }}
+        # Write .env from secret
+        echo "${{ secrets.ENV_CONTENT }}" > .env
+        # Create virtual environment if not exists
+        if [ ! -d ".venv" ]; then
+            python3 -m venv .venv
+        fi
+        source .venv/bin/activate
+        pip install --upgrade pip
+        pip install -r requirements.txt
+        sudo systemctl daemon-reload
+        sudo systemctl restart weather-assistant.service
+        sudo systemctl enable weather-assistant.service
+        EOF
